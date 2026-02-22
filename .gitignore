@@ -1,0 +1,34 @@
+# =====================
+# Data (never commit)
+# =====================
+data/
+output/
+output_versions/
+
+# Generated files
+*.png
+*.jpg
+*.jpeg
+*.csv
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Conda
+.env
+conda-meta/
+
+# VSCode
+.vscode/
+
+# OS junk
+.DS_Store
+Thumbs.db

@@ -1,0 +1,15 @@
+{
+  "include": ["scripts"],
+  "exclude": ["input", "output", "output_versions", "**/__pycache__"],
+  "pythonVersion": "3.10",
+  "typeCheckingMode": "off",
+  "useLibraryCodeForTypes": true,
+  "reportMissingImports": true,
+  "reportMissingTypeStubs": false,
+  "executionEnvironments": [
+    {
+      "root": "./",
+      "extraPaths": ["scripts"]
+    }
+  ]
+}
