@@ -1,206 +1,266 @@
 """
-Finalizes the dataset by:
-- Removing unmatched images
-- Normalizing extracted text
-- Classifying into numbers, English, and Konkani
-- Saving categorized CSVs
-- Generating a final report with dataset statistics and integrity checks.
+This script finalizes the dataset by:
+1. Loading the validated CSV.
+2. Normalizing the extracted text.
+3. Classifying entries into English and Konkani.
+4. Copying images into a new structured directory.
+5. Saving separate CSV files for English and Konkani.
+6. Generating a markdown report with dataset statistics and integrity check.
 """
 
 import os
 import re
+import shutil
 import unicodedata
 from datetime import datetime
+from pathlib import Path
 
 import pandas as pd
+from utils.sorting import sort_by_hierarchy
 
-# ---------- ROOT ----------
+# ==============================
+# ROOT CONFIG
+# ==============================
 PROJECT_ROOT = os.environ.get(
-    "PROJECT_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    "PROJECT_ROOT",
+    os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
 )
 
 OUTPUT_ROOT = os.environ.get("OUTPUT_ROOT", os.path.join(PROJECT_ROOT, "output"))
 
-VALIDATED_CSV = os.path.join(OUTPUT_ROOT, "validated", "labels_validated.csv")
+VALIDATED_CSV = os.path.join(OUTPUT_ROOT, "labels_validated.csv")
 IMAGE_ROOT = os.path.join(OUTPUT_ROOT, "images")
-FINAL_ROOT = os.path.join(OUTPUT_ROOT, "final")
 
-os.makedirs(FINAL_ROOT, exist_ok=True)
+FINAL_ROOT = os.path.join(OUTPUT_ROOT, "final_dataset")
 
-NUMBERS_CSV = os.path.join(FINAL_ROOT, "dataset_numbers.csv")
+ENGLISH_ROOT = os.path.join(FINAL_ROOT, "english")
+KONKANI_ROOT = os.path.join(FINAL_ROOT, "konkani")
+
+os.makedirs(ENGLISH_ROOT, exist_ok=True)
+os.makedirs(KONKANI_ROOT, exist_ok=True)
+
 ENGLISH_CSV = os.path.join(FINAL_ROOT, "dataset_english.csv")
 KONKANI_CSV = os.path.join(FINAL_ROOT, "dataset_konkani.csv")
 REPORT_MD = os.path.join(FINAL_ROOT, "dataset_report.md")
 
-# ---------- SAFETY CHECK ----------
+# ==============================
+# LOAD DATA
+# ==============================
 if not os.path.exists(VALIDATED_CSV):
-    print(f"❌ Validated CSV not found: {VALIDATED_CSV}")
+    print("❌ labels_validated.csv not found.")
     exit()
 
-if not os.path.exists(IMAGE_ROOT):
-    print(f"❌ Images folder not found: {IMAGE_ROOT}")
-    exit()
-
-# ---------- LOAD ----------
-print("📄 Loading validated dataset...")
+print("📄 Loading validated CSV...")
 df = pd.read_csv(VALIDATED_CSV)
 
 total_rows = len(df)
-print(f"Total validated rows: {total_rows}")
 
-# ---------- SPLIT ----------
 matched_df = df[df["match"] == "YES"].copy()
-unmatched_df = df[df["match"] != "YES"].copy()
+unmatched_count = total_rows - len(matched_df)
 
 print(f"Matched rows: {len(matched_df)}")
-print(f"Unmatched rows: {len(unmatched_df)}")
+print(f"Unmatched rows ignored: {unmatched_count}")
 
-# ---------- DELETE UNMATCHED IMAGES ----------
-print("🗑 Removing unmatched images...")
+# ==============================
+# INCREMENTAL FILTER
+# ==============================
+processed_paths = set()
 
-unmatched_set = set(unmatched_df["image_path"])
-deleted_count = 0
-missing_count = 0
+if os.path.exists(ENGLISH_CSV):
+    processed_paths.update(pd.read_csv(ENGLISH_CSV)["image_path"])
 
-for rel_path in unmatched_set:
-    full_path = os.path.join(IMAGE_ROOT, rel_path)
-
-    if os.path.exists(full_path):
-        os.remove(full_path)
-        deleted_count += 1
-    else:
-        missing_count += 1
-
-print(f"Deleted unmatched images: {deleted_count}")
-print(f"Missing (already removed): {missing_count}")
+if os.path.exists(KONKANI_CSV):
+    processed_paths.update(pd.read_csv(KONKANI_CSV)["image_path"])
 
 
-# ---------- NORMALIZATION ----------
+def convert_to_final_path(rel_path, category):
+    parts = Path(rel_path).parts
+    return os.path.join(category, *parts[1:])
+
+
+matched_df = matched_df[
+    ~matched_df.apply(
+        lambda row: (
+            convert_to_final_path(row["image_path"], "english") in processed_paths
+            or convert_to_final_path(row["image_path"], "konkani") in processed_paths
+        ),
+        axis=1,
+    )
+]
+
+# ==============================
+# NORMALIZATION
+# ==============================
 def normalize(text):
     return unicodedata.normalize("NFC", str(text).strip())
 
 
 matched_df["extracted_text"] = matched_df["extracted_text"].apply(normalize)
 
-
-# ---------- CLASSIFICATION ----------
+# ==============================
+# CLASSIFICATION (UPDATED)
+# ==============================
 def classify(word):
-    if re.fullmatch(r"\d+", word):
-        return "numbers"
+
+    # Pure English letters
     if re.fullmatch(r"[A-Za-z]+", word):
         return "english"
+
+    # Roman digits only (0-9)
+    if re.fullmatch(r"[0-9]+", word):
+        return "english"
+
+    # Ordinals like 1st, 26th
+    if re.fullmatch(r"[0-9]+(st|nd|rd|th)", word, re.IGNORECASE):
+        return "english"
+
+    # Devanagari digits (०१२३४५६७८९)
+    if re.fullmatch(r"[\u0966-\u096F]+", word):
+        return "konkani"
+
+    # Everything else → Konkani
+    # (Includes Devanagari text, danda "।", punctuation, mixed forms)
     return "konkani"
 
 
 matched_df["category"] = matched_df["extracted_text"].apply(classify)
 
-numbers_df = matched_df[matched_df["category"] == "numbers"]
 english_df = matched_df[matched_df["category"] == "english"]
 konkani_df = matched_df[matched_df["category"] == "konkani"]
 
-# ---------- UNIQUE WORD STATS ----------
-unique_english = sorted(set(english_df["extracted_text"]))
-unique_konkani = sorted(set(konkani_df["extracted_text"]))
+# ==============================
+# COPY FUNCTION
+# ==============================
+def copy_dataset(df_subset, target_root):
 
-n_unique_english = len(unique_english)
-n_unique_konkani = len(unique_konkani)
+    updated_paths = []
+
+    for _, row in df_subset.iterrows():
+        rel_path = row["image_path"]
+        src = os.path.join(OUTPUT_ROOT, rel_path)
+
+        parts = Path(rel_path).parts
+        relative_structure = os.path.join(*parts[1:])
+        dst = os.path.join(target_root, relative_structure)
+
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+
+        if os.path.exists(src):
+            shutil.copy2(src, dst)
+
+        new_rel = os.path.relpath(dst, FINAL_ROOT)
+        updated_paths.append(new_rel)
+
+    df_subset = df_subset.copy()
+    df_subset["image_path"] = updated_paths
+    return df_subset
 
 
-# ---------- SAVE FUNCTION ----------
-def save_dataset(df_subset, path):
+print("📂 Copying images into final_dataset...")
+
+english_df = copy_dataset(english_df, ENGLISH_ROOT)
+konkani_df = copy_dataset(konkani_df, KONKANI_ROOT)
+
+# ==============================
+# SAVE CSV FILES (APPEND MODE)
+# ==============================
+def append_or_create(df_subset, path):
+
+    if df_subset.empty:
+        return 0
+
+    df_subset = sort_by_hierarchy(df_subset, path_column="image_path")
+
+    if os.path.exists(path):
+        existing = pd.read_csv(path)
+        df_subset = pd.concat([existing, df_subset], ignore_index=True)
+        df_subset = sort_by_hierarchy(df_subset, path_column="image_path")
+
     out = df_subset[["image_path", "extracted_text"]].copy()
     out.columns = ["image_path", "ground_truth"]
+
     out.to_csv(path, index=False, encoding="utf-8-sig")
+
     return len(out)
 
 
-print("💾 Saving categorized datasets...")
+n_english = append_or_create(english_df, ENGLISH_CSV)
+n_konkani = append_or_create(konkani_df, KONKANI_CSV)
 
-n_numbers = save_dataset(numbers_df, NUMBERS_CSV)
-n_english = save_dataset(english_df, ENGLISH_CSV)
-n_konkani = save_dataset(konkani_df, KONKANI_CSV)
+# ==============================
+# UNIQUE WORD STATS
+# ==============================
+final_english_df = (
+    pd.read_csv(ENGLISH_CSV) if os.path.exists(ENGLISH_CSV) else pd.DataFrame()
+)
+final_konkani_df = (
+    pd.read_csv(KONKANI_CSV) if os.path.exists(KONKANI_CSV) else pd.DataFrame()
+)
 
-# ---------- REMOVE EMPTY DOCUMENT FOLDERS ----------
-print("🧹 Cleaning empty document folders...")
+unique_english = (
+    len(set(final_english_df["ground_truth"])) if not final_english_df.empty else 0
+)
+unique_konkani = (
+    len(set(final_konkani_df["ground_truth"])) if not final_konkani_df.empty else 0
+)
 
-removed_dirs = 0
+# ==============================
+# INTEGRITY CHECK
+# ==============================
+image_count = 0
+for root, _, files in os.walk(FINAL_ROOT):
+    image_count += len([f for f in files if f.endswith(".png")])
 
-for doc in os.listdir(IMAGE_ROOT):
-    doc_path = os.path.join(IMAGE_ROOT, doc)
+csv_total = len(final_english_df) + len(final_konkani_df)
+integrity_status = "PASS" if image_count == csv_total else "CHECK"
 
-    if os.path.isdir(doc_path):
-        if not os.listdir(doc_path):
-            os.rmdir(doc_path)
-            removed_dirs += 1
-
-print(f"Empty document folders removed: {removed_dirs}")
-
-# ---------- FINAL IMAGE COUNT ----------
-disk_image_count = 0
-
-for root, _, files in os.walk(IMAGE_ROOT):
-    disk_image_count += len([f for f in files if f.endswith(".png")])
-
-final_total = n_numbers + n_english + n_konkani
-integrity_status = "PASS" if disk_image_count == final_total else "FAIL"
-
-# ---------- REPORT ----------
+# ==============================
+# REPORT
+# ==============================
 report = f"""
-# Dataset Finalization Report
+# Final Dataset Report
 
 Generated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 ---
 
-## 📊 Validation Summary
+## Validation Summary
 
-- Total validated entries: {total_rows}
-- Matched kept: {len(matched_df)}
-- Unmatched removed: {len(unmatched_df)}
-
----
-
-## 📁 Final Dataset Breakdown
-
-- Numbers dataset size: {n_numbers}
-- English dataset size: {n_english}
-- Konkani dataset size: {n_konkani}
-- **Total final size:** {final_total}
+Total validated entries: {total_rows}
+Matched kept: {len(df[df["match"] == "YES"])}
+Unmatched ignored: {unmatched_count}
 
 ---
 
-## 🔤 Vocabulary Statistics
+## Final Dataset Breakdown
 
-- Unique English words: {n_unique_english}
-- Unique Konkani words: {n_unique_konkani}
-
----
-
-## 🗑 Cleanup Summary
-
-- Unmatched images deleted: {deleted_count}
-- Missing images: {missing_count}
-- Empty document folders removed: {removed_dirs}
+English: {len(final_english_df)}
+Konkani: {len(final_konkani_df)}
+Total final size: {csv_total}
 
 ---
 
-## 🔒 Integrity Check
+## Vocabulary Statistics
 
-- Images on disk: {disk_image_count}
-- CSV total entries: {final_total}
-- **Integrity Status: {integrity_status}**
+Unique English words: {unique_english}
+Unique Konkani words: {unique_konkani}
 
 ---
 
-Dataset is fully synchronized and ready for OCR model training.
+## Integrity Check
+
+Images inside final_dataset: {image_count}
+CSV total entries: {csv_total}
+Status: {integrity_status}
+
+---
+
+Note: Original images remain untouched in output/images/.
 """
 
 with open(REPORT_MD, "w", encoding="utf-8") as f:
     f.write(report)
 
-print("\n✅ Dataset finalized successfully.")
-print(f"📁 Final datasets saved in: {FINAL_ROOT}")
-print(f"📝 Report saved at: {REPORT_MD}")
-print(f"🔒 Integrity check: {integrity_status}")
-print(f"🔤 Unique English words: {n_unique_english}")
-print(f"🔤 Unique Konkani words: {n_unique_konkani}")
+print("\n✅ Final dataset updated incrementally.")
+print(f"📁 Location: {FINAL_ROOT}")
+print(f"🔒 Integrity: {integrity_status}")

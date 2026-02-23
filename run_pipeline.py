@@ -1,4 +1,9 @@
-# This script orchestrates the entire OCR dataset pipeline, running segmentation, comparison, and cleaning in sequence. It supports full rebuilds, incremental processing, and versioned outputs. The script uses command-line arguments to control the pipeline behavior and ensures that each step is executed successfully before proceeding to the next. It also handles environment variables for output paths and provides user prompts for critical actions like deleting existing data. Make sure to have the required libraries installed and the input data structured correctly before running this script.
+"""
+This script orchestrates the entire OCR dataset pipeline, including:
+1. Building the dataset by extracting word-level images and labels from PDFs.
+2. Validating the extracted dataset through manual review.
+3. Finalizing the dataset by cleaning, normalizing, and categorizing the data.
+"""
 
 import argparse
 import os
