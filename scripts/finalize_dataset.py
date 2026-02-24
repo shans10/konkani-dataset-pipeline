@@ -98,28 +98,31 @@ def normalize(text):
 matched_df["extracted_text"] = matched_df["extracted_text"].apply(normalize)
 
 # ==============================
-# CLASSIFICATION (UPDATED)
+# REMOVE PURE PUNCTUATION / SYMBOL TOKENS
+# ==============================
+valid_token_pattern = re.compile(r"[A-Za-z0-9\u0900-\u097F]")
+
+matched_df = matched_df[
+    matched_df["extracted_text"].apply(lambda w: bool(valid_token_pattern.search(w)))
+]
+
+# ==============================
+# CLASSIFICATION
 # ==============================
 def classify(word):
 
-    # Pure English letters
     if re.fullmatch(r"[A-Za-z]+", word):
         return "english"
 
-    # Roman digits only (0-9)
     if re.fullmatch(r"[0-9]+", word):
         return "english"
 
-    # Ordinals like 1st, 26th
     if re.fullmatch(r"[0-9]+(st|nd|rd|th)", word, re.IGNORECASE):
         return "english"
 
-    # Devanagari digits (०१२३४५६७८९)
     if re.fullmatch(r"[\u0966-\u096F]+", word):
         return "konkani"
 
-    # Everything else → Konkani
-    # (Includes Devanagari text, danda "।", punctuation, mixed forms)
     return "konkani"
 
 
@@ -169,19 +172,20 @@ def append_or_create(df_subset, path):
     if df_subset.empty:
         return 0
 
-    df_subset = sort_by_hierarchy(df_subset, path_column="image_path")
+    # ✅ FIX: Rename BEFORE concat to align schema
+    df_subset = df_subset[["image_path", "extracted_text"]].copy()
+    df_subset.columns = ["image_path", "ground_truth"]
 
     if os.path.exists(path):
         existing = pd.read_csv(path)
+        existing = existing[["image_path", "ground_truth"]]
         df_subset = pd.concat([existing, df_subset], ignore_index=True)
-        df_subset = sort_by_hierarchy(df_subset, path_column="image_path")
 
-    out = df_subset[["image_path", "extracted_text"]].copy()
-    out.columns = ["image_path", "ground_truth"]
+    df_subset = sort_by_hierarchy(df_subset, path_column="image_path")
 
-    out.to_csv(path, index=False, encoding="utf-8-sig")
+    df_subset.to_csv(path, index=False, encoding="utf-8-sig")
 
-    return len(out)
+    return len(df_subset)
 
 
 n_english = append_or_create(english_df, ENGLISH_CSV)
