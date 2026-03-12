@@ -57,13 +57,25 @@ def blur(img):
 
 
 def dilation(img):
+
+    inv = 255 - img
+
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
-    return cv2.dilate(img,kernel)
+
+    dilated = cv2.dilate(inv, kernel)
+
+    return 255 - dilated
 
 
 def erosion(img):
+
+    inv = 255 - img
+
     kernel = cv2.getStructuringElement(cv2.MORPH_RECT,(2,2))
-    return cv2.erode(img,kernel)
+
+    eroded = cv2.erode(inv, kernel)
+
+    return 255 - eroded
 
 
 def perspective(img):
@@ -208,7 +220,8 @@ def process_image(args):
 
         out_path = os.path.join(out_dir, new_name)
 
-        cv2.imwrite(out_path, aug_img, PNG_PARAMS)
+        if not os.path.exists(out_path):
+            cv2.imwrite(out_path, aug_img, PNG_PARAMS)
 
         rel_out = os.path.join(
             "images",
@@ -277,7 +290,8 @@ def generate_augmentation(aug_name):
                     for result in pool.imap_unordered(process_image, tasks):
 
                         if result is not None:
-                            csv_buffer.append(result)
+                            if result not in csv_buffer:
+                                csv_buffer.append(result)
 
                         if len(csv_buffer) >= MAX_CSV_ROWS:
                             write_csv(csv_buffer, aug_name, csv_index)
