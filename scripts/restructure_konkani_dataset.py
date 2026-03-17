@@ -1,5 +1,8 @@
+# This script restructures the Konkani dataset by moving images into shard directories and creating new CSV files with updated paths.
+
 import os
 import shutil
+
 import pandas as pd
 from tqdm import tqdm
 
@@ -54,7 +57,6 @@ def main():
     csv_index = 1
 
     for idx, rel in enumerate(tqdm(images)):
-
         src = os.path.join(DATASET_DIR, rel)
 
         shard = idx // SHARD_SIZE
@@ -73,7 +75,6 @@ def main():
         csv_rows.append((new_rel, label_map[rel]))
 
         if len(csv_rows) >= CSV_LIMIT:
-
             df = pd.DataFrame(csv_rows, columns=["image_path", "ground_truth"])
 
             df.to_csv(
@@ -85,7 +86,6 @@ def main():
             csv_index += 1
 
     if csv_rows:
-
         df = pd.DataFrame(csv_rows, columns=["image_path", "ground_truth"])
 
         df.to_csv(
